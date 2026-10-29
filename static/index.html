@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ViewPair · 双视角视频工坊</title>
+<link rel="stylesheet" href="/static/style.css">
+<header>
+<div class="brand">▥ View<span>Pair</span>
+</div>
+</header>
+<main>
+<div class="intro">
+<div>
+<div class="eyebrow">TWO VIEWS. ONE STORY.</div>
+<h1>把两个视角，合为一帧。</h1>
+<p>分别上传视频，选择时间对齐方式，自动去黑边并合成。</p>
+</div>
+</div>
+<div class="grid">
+<section class="card">
+<h2>01 / 第一视角</h2>
+<div class="sub">合成画面左侧 · 通常为竖向视频</div>
+<label class="upload" id="firstDrop">
+<span class="icon" id="firstIcon">＋</span>
+<b id="firstPlaceholder">点击选择或拖入一个视频</b>
+<small id="firstHelp">MP4 / MOV / WebM · 每个视角一个视频</small>
+<input id="first" type="file" accept="video/*" aria-label="上传第一视角">
+</label>
+<div class="filename" id="firstName">尚未选择文件</div>
+<video class="preview" id="firstPreview" controls>
+</video>
+<button type="button" class="replace-video" id="firstReplace" hidden>更换视频</button>
+</section>
+<section class="card">
+<h2>02 / 第三视角</h2>
+<div class="sub">合成画面右侧 · 通常为横向视频</div>
+<label class="upload" id="thirdDrop">
+<span class="icon" id="thirdIcon">＋</span>
+<b id="thirdPlaceholder">点击选择或拖入一个视频</b>
+<small id="thirdHelp">MP4 / MOV / WebM · 每个视角一个视频</small>
+<input id="third" type="file" accept="video/*" aria-label="上传第三视角">
+</label>
+<div class="filename" id="thirdName">尚未选择文件</div>
+<video class="preview" id="thirdPreview" controls>
+</video>
+<button type="button" class="replace-video" id="thirdReplace" hidden>更换视频</button>
+</section>
+<section class="card" >
+<h2>03 / Motion 数据</h2>
+<div class="hint">上传 motion.csv，按视频的共同绝对时间范围裁切，保留原始时间并新增 video_time_s。</div>
+<input id="motion" type="file" accept=".csv,text/csv" aria-label="上传 Motion CSV" style="margin-top:16px">
+<div id="motionName" class="filename">可选：尚未选择 Motion CSV</div>
+<div id="motionDestination" class="hint">
+</div>
+</section>
+</div>
+<section class="card">
+<div class="settings">
+<div>
+<div class="label">导出命名</div>
+<div class="naming-fields">
+<div>
+<label class="label">① 日期时间 · 自动读取</label>
+<div id="captureTime" class="hint">选择两个视频后自动读取</div>
+<div class="hint" id="timeSource">
+</div>
+</div>
+<div>
+<label class="label" for="role">② 角色</label>
+<select id="role">
+<option>teacher</option>
+<option>student</option>
+<option value="custom">＋ 自定义增加</option>
+</select>
+<input id="customRole" hidden placeholder="输入新角色" aria-label="自定义角色">
+</div>
+<div>
+<label class="label" for="content">③ 内容</label>
+<select id="content">
+<option>icecoffee</option>
+<option>hotcoffee</option>
+<option value="custom">＋ 自定义增加</option>
+</select>
+<input id="customContent" hidden placeholder="输入新内容" aria-label="自定义内容">
+</div>
+<div>
+<label class="label">④ 视角 · 自动填充</label>
+<div class="hint">firstthird</div>
+</div>
+</div>
+<div class="hint">文件名预览</div>
+<div id="namePreview" class="name-preview">日期时间_teacher_icecoffee_firstthird.mp4</div>
+<div class="name-preview" id="motionNamePreview">日期时间_teacher_icecoffee_firstthird_motion.csv</div>
+<div class="hint" id="destination">选择视频后预览完整保存地址</div>
+</div>
+</div>
+<div style="margin-top:24px;padding-top:20px;border-top:1px solid #ecede7">
+<label class="label" for="align">时间对齐方式</label>
+<select id="align" style="padding:12px;border:1px solid #d6ddce;border-radius:8px;font-size:14px">
+<option value="timestamp">自动 · 按拍摄时间戳对齐</option>
+<option value="already">已对齐 · 两条视频从起点同时播放</option>
+</select>
+<div class="hint">自动模式：Rokid 读取原始文件名中的开始时间（北京时间），iPhone 读取拍摄元数据。按共同时间范围裁切视频和 Motion CSV；秒级时间及设备时钟误差可能导致动作偏差，尚未进行音频校正。</div>
+<div class="hint" id="timestamps">
+</div>
+</div>
+<div style="margin-top:20px">
+<label class="toggle">
+<input id="syncServer" type="checkbox">同时保存一份到服务器 /mnt/skill/mess</label>
+<input id="serverPassword" type="password" hidden autocomplete="off" placeholder="服务器密码（仅本次使用，不保存）" aria-label="服务器密码" style="padding:10px;border:1px solid #d6ddce;border-radius:8px;width:min(100%,360px)">
+</div>
+<label class="toggle" style="margin-top:20px">
+<input id="downloadTogether" type="checkbox" checked>处理完成后，将所有结果打包下载（可选）</label>
+<div class="actions">
+<span class="note">H.264 + AAC · 保留原始时间与元数据 JSON · 重名自动编号</span>
+<button id="start">开始合成并导出 ↗</button>
+</div>
+<div class="status" id="status" role="status" aria-live="polite">
+<span id="stage">
+</span>
+<div class="bar">
+<i id="progress">
+</i>
+</div>
+<div class="hint" id="detail">
+</div>
+</div>
+</section>
+<section class="card result" id="result">
+<h2>✓ 视频已就绪</h2>
+<div class="hint" id="saved">
+</div>
+<video id="output" controls>
+</video>
+<a class="download" id="bundleDownload" style="display:inline-block;margin-bottom:12px">打包下载全部结果 ZIP ↓</a> <a class="download" id="download">下载视频 ↓</a> <a class="download" id="motionDownload" hidden>下载同步 Motion CSV ↓</a> <a class="download" id="metadataDownload" style="background:#78856d">下载原始信息 JSON ↓</a>
+</section>
+</main>
+<footer>本地保留导出文件；勾选服务器同步时，将 MP4、Motion CSV 和元数据一同保存到 /mnt/skill/mess。</footer>
+<script type="module" src="/static/app.js">
+</script>
+</html>
+
