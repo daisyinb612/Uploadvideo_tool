@@ -4,6 +4,7 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from config import SERVER_DIR
 from .media import build_name, capture_time, naming_time, probe
@@ -49,7 +50,7 @@ class JobManager:
         name = base
         number = 0
         while any((self.paths.outputs / (name + suffix)).exists()
-                  for suffix in (".mp4", "_motion.csv", ".metadata.json")) or any(
+                  for suffix in (".mp4", "_motion.csv", ".metadata.json", "_first.mp4", "_third.mp4")) or any(
                       job.get("reserved_name") == name and job["status"] == "running"
                       for job in self.jobs.values()):
             number += 1
@@ -121,7 +122,12 @@ class JobManager:
             video = published["video"]
             job.update(url="/outputs/" + jid, output=str(video), path=str(video),
                        filename=video.name, metadata_path=str(published["metadata"]),
-                       metadata_url="/metadata/" + jid)
+                       metadata_url="/metadata/" + jid,
+                       first_path=str(published["first"]), third_path=str(published["third"]),
+                       task_name="".join(settings["name"].rsplit("_firstthird", 1)),
+                       video_first="/videos/" + quote(published["first"].name),
+                       video_third="/videos/" + quote(published["third"].name),
+                       video_first_third="/videos/" + quote(video.name))
             if "motion" in published:
                 job.update(motion_url="/motion/" + jid, motion_path=str(published["motion"]),
                            motion_filename=published["motion"].name, motion_info=motion_info)

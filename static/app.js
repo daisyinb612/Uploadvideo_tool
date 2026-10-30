@@ -83,6 +83,11 @@ function showNames(name, path, motionPath) {
   $('motionNamePreview').textContent = name + '_motion.csv';
   $('destination').textContent = '服务器目标：' + path;
   $('motionDestination').textContent = '服务器 CSV：' + motionPath;
+  $('copyTask').value = name.replace(/_firstthird(?=（\d+）$|$)/, '');
+  for (const [id, suffix] of [['copyFirst', '_first.mp4'], ['copyThird', '_third.mp4'], ['copyCombined', '.mp4']]) {
+    $(id).value = new URL('/videos/' + encodeURIComponent(name + suffix), location.origin).href;
+  }
+  $('copyStatus').textContent = '';
 }
 
 function scheduleNaming() {
@@ -146,7 +151,9 @@ function status(text, progress) {
 
 function setBusy(value) {
   busy = value;
-  for (const input of document.querySelectorAll('input, select, button')) input.disabled = value;
+  for (const input of document.querySelectorAll('input, select, button')) {
+    if (!input.closest('.copy-fields')) input.disabled = value;
+  }
 }
 
 function downloadLink(id, url, filename) {
@@ -161,6 +168,11 @@ function showResult(jid, job, autoDownload) {
   downloadLink('metadataDownload', job.metadata_url, job.filename.replace(/\.mp4$/i, '.metadata.json'));
   $('motionDownload').hidden = !job.motion_url;
   if (job.motion_url) downloadLink('motionDownload', job.motion_url, job.motion_filename);
+  $('copyTask').value = job.task_name;
+  $('copyFirst').value = new URL(job.video_first, location.origin).href;
+  $('copyThird').value = new URL(job.video_third, location.origin).href;
+  $('copyCombined').value = new URL(job.video_first_third, location.origin).href;
+  $('copyStatus').textContent = '';
   $('output').src = job.url;
   const messages = ['本地已保存：' + job.path];
   if (job.motion_path) messages.push('CSV：' + job.motion_path);
@@ -221,7 +233,7 @@ $('start').onclick = async () => {
     }
     const job = await waitForJob(result.id);
     showResult(result.id, job, autoDownload);
-    scheduleNaming(); // Retained uploads allow another local test without re-uploading.
+    // Keep the completed task's name and links until the user changes the configuration.
   } catch (error) {
     $('stage').textContent = error.message;
     $('stage').className = 'error';
@@ -229,3 +241,21 @@ $('start').onclick = async () => {
     setBusy(false);
   }
 };
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    $('copyStatus').textContent = '已复制';
+  } catch {
+    $('copyStatus').textContent = '复制未成功，请选中内容后手动复制';
+  }
+}
+for (const button of document.querySelectorAll('[data-copy]')) {
+  button.onclick = () => copyText($(button.dataset.copy).value);
+}
+$('copyRow').onclick = () => copyText(
+  ['copyTask', 'copyFirst', 'copyThird', 'copyCombined'].map(id => $(id).value).join('\t')
+);
+$('copyHeader').onclick = () => copyText(
+  ['task_name', 'video_first', 'video_third', 'video_first_third'].join('\t')
+);

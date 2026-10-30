@@ -107,6 +107,13 @@ class LocalWorkflow(unittest.TestCase):
                     jid = post('/api/jobs', payload)['id']
                     job = wait(jid)
                     self.assertEqual(job['filename'], preview['name']+'.mp4')
+                    self.assertEqual(job['task_name'], '20261026_180001_teacher_icecoffee')
+                    for key in ('video_first', 'video_third', 'video_first_third'):
+                        with request(job[key], headers={'Range': 'bytes=0-15'}) as result:
+                            self.assertEqual(result.status, 206)
+                            self.assertEqual(len(result.read()), 16)
+                    for key in ('first_path', 'third_path'):
+                        self.assertAlmostEqual(probe(Path(job[key]))['duration'], 2, delta=.1)
                     self.assertEqual(cached_probe.call_count, 2)
                     self.assertEqual(job['details']['crops'][1], [320, 180, 0, 40])
                     self.assertEqual(job['details']['starts'], [1.0, 0])
@@ -118,7 +125,7 @@ class LocalWorkflow(unittest.TestCase):
                         self.assertEqual(len(result.read()), 16)
                     with request('/bundle/'+jid) as result:
                         archive = zipfile.ZipFile(io.BytesIO(result.read()))
-                    self.assertEqual(len(archive.namelist()), 3)
+                    self.assertEqual(len(archive.namelist()), 5)
                     self.assertIsNone(archive.testzip())
                     metadata = json.loads(Path(job['metadata_path']).read_text())
                     self.assertEqual(metadata['motion']['rows'], 2)

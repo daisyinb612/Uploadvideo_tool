@@ -128,7 +128,7 @@ class Handler(BaseHTTPRequestHandler):
     def bundle(self, job):
         with tempfile.TemporaryFile() as archive:
             with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as bundle:
-                for key in ("output", "motion_path", "metadata_path"):
+                for key in ("output", "first_path", "third_path", "motion_path", "metadata_path"):
                     if job.get(key):
                         path = Path(job[key])
                         bundle.write(path, arcname=path.name)
@@ -158,7 +158,12 @@ class Handler(BaseHTTPRequestHandler):
                   "/static/upload-slot.mjs": "upload-slot.mjs"}
         if path in assets:
             return self.serve_file(STATIC_DIR / assets[path])
-        routes = {"outputs": ("output", "video/mp4"), "motion": ("motion_path", "text/csv; charset=utf-8"),
+        if path.startswith("/videos/"):
+            filename = unquote(path[len("/videos/"):])
+            if not filename or Path(filename).name != filename or not filename.endswith(".mp4"):
+                return self.send_error(404)
+            return self.serve_file(self.manager.paths.outputs / filename, "video/mp4", ranged=True)
+        routes = {"outputs": ("output", "video/mp4"), "first": ("first_path", "video/mp4"), "third": ("third_path", "video/mp4"), "motion": ("motion_path", "text/csv; charset=utf-8"),
                   "metadata": ("metadata_path", "application/json; charset=utf-8")}
         parts = path.strip("/").split("/")
         if len(parts) != 2:
@@ -172,4 +177,4 @@ class Handler(BaseHTTPRequestHandler):
         if route not in routes or not job.get(routes[route][0]):
             return self.send_error(404)
         key, content_type = routes[route]
-        return self.serve_file(Path(job[key]), content_type, ranged=route == "outputs")
+        return self.serve_file(Path(job[key]), content_type, ranged=route in ("outputs", "first", "third"))

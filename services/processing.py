@@ -1,4 +1,4 @@
-"""Render one composite video and its optional synchronized Motion data."""
+"""Render aligned individual views, composite video and synchronized Motion data."""
 import json
 import subprocess
 from datetime import datetime, timezone
@@ -37,7 +37,7 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
         w, h, x, y = crop
         filters.append(
             f"[{index}:v]crop={w}:{h}:{x}:{y},scale={width}:{height},"
-            f"setsar=1,fps=30,setpts=PTS-STARTPTS[v{index}]"
+            f"setsar=1,fps=30,setpts=PTS-STARTPTS,split=2[v{index}][solo{index}]"
         )
     filters.append("[v0][v1]hstack=inputs=2:shortest=1[v]")
     audio = next((i for i in (0, 1) if infos[i]["audio"]), None)
@@ -100,6 +100,24 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
         "-pix_fmt", "yuv420p", "-movflags", "+faststart+use_metadata_tags",
         "-progress", "pipe:1", "-n", str(output),
     ]
+    # Reuse the same decoded/cropped frames for all three outputs.
+    for index, view in enumerate(("first", "third")):
+        individual = workdir / (name + "_" + view + ".mp4")
+        command += ["-map", f"[solo{index}]"]
+        if infos[index]["audio"]:
+            command += ["-map", f"{index}:a:0", "-af", "asetpts=PTS-STARTPTS",
+                        "-c:a", "aac", "-b:a", "160k"]
+        command += [
+            "-map_metadata", "-1",
+            "-metadata", "viewpair_source=" + json.dumps(metadata["sources"][index], ensure_ascii=False),
+            "-metadata", "viewpair_processing=" + json.dumps(metadata["processing"]),
+        ]
+        if mode == "timestamp":
+            command += ["-metadata", "creation_time=" + common,
+                        "-metadata", "com.apple.quicktime.creationdate=" + common]
+        command += ["-t", str(duration), "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart+use_metadata_tags", str(individual)]
+        artifacts[view] = individual
     log = workdir / "ffmpeg.log"
     with log.open("w") as errors:
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True) as process:
@@ -112,7 +130,8 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
                         pass
             if process.wait():
                 raise RuntimeError(log.read_text()[-1500:])
-    probe(output)
+    for video in (output, artifacts["first"], artifacts["third"]):
+        probe(video)
     metadata_path = workdir / (name + ".metadata.json")
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
     artifacts.update(video=output, metadata=metadata_path)
