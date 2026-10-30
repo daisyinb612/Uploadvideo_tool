@@ -329,3 +329,11 @@ h1 {
 .copy-row input { min-width: 0; flex: 1; padding: 12px; border: 1px solid #d6ddce; border-radius: 8px; font: 13px monospace; background: #fafbf7; }
 .copy-row button { flex-shrink: 0; padding: 10px 15px; }
 .copy-fields > button { margin: 6px 8px 6px 0; }
+
+#start {
+  min-height:68px;
+  min-width:min(300px,100%);
+  padding:20px 36px;
+  font-size:20px;
+  border-radius:12px
+}
