@@ -7,6 +7,7 @@ video-tool/
 │   ├── __init__.py
 │   ├── jobs.py             # 内存状态、命名、任务编排
 │   ├── media.py            # 元数据、时间对齐、黑边检测
+│   ├── synchronization.py  # 多段音频校准与异常时间戳检查
 │   ├── processing.py       # 三视角导出与元数据保存
 │   ├── motion.py           # Motion CSV 同步裁切
 │   └── storage.py          # 可选 SSH 保存
@@ -17,7 +18,7 @@ video-tool/
 │   └── upload-slot.mjs     # 单文件上传状态控制
 ├── tests/
 │   ├── test_local.py       # 本地处理流程验证
+│   ├── test_synchronization.py # 音频偏移与异常时间戳验证
 │   └── upload-slot.test.mjs # 上传竞态验证
-├── uploads/                # 上传暂存，不入 Git
-└── outputs/                # 视频、Motion CSV、元数据，不入 Git
+└── .env.local              # 本地服务器凭据，不入 Git
 ```

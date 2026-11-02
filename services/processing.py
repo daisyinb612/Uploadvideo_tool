@@ -3,14 +3,15 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
-from .media import absolute_start, alignment, capture_time, detect, probe
+from .media import absolute_start, capture_time, detect, probe, video_names
 from .motion import trim_motion
+from .synchronization import resolve_alignment
 
 
 def render(paths, infos, motion_source, workdir, name, mode, report):
     """Write all artifacts inside an isolated workdir before publishing them."""
     report("对齐时间范围", 1)
-    starts, duration = alignment(infos, {"align": mode})
+    starts, duration, sync = resolve_alignment(paths, infos, mode)
     artifacts = {}
     motion_info = None
     if motion_source:
@@ -30,6 +31,7 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
         "duration": duration,
         "starts": starts,
         "alignment": mode,
+        "synchronization": sync,
     }
     report("合成导出", 5, details)
     filters = []
@@ -56,10 +58,12 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
             "fps": 30,
             "audio_source": audio,
             "time_sources": [
-                capture_time(info)[1] if mode == "timestamp" else "已对齐素材"
+                "音频校准" if sync["method"] == "audio" else
+                (capture_time(info)[1] if mode == "timestamp" else "已对齐素材")
                 for info in infos
             ],
-            "alignment_accuracy_note": "秒级设备时钟初步对齐，未进行音频校正",
+            "alignment_accuracy_note": sync["accuracy_note"],
+            "synchronization": sync,
             "note": "Video and selected audio are re-encoded; auxiliary tracks are not copied.",
         },
     }
@@ -88,8 +92,13 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
         "-metadata", "viewpair_sources=" + json.dumps(source_tags, ensure_ascii=False),
         "-metadata", "viewpair_processing=" + json.dumps(metadata["processing"]),
     ]
+    common = None
     if mode == "timestamp":
-        common = datetime.fromtimestamp(absolute_start(infos, starts), timezone.utc).isoformat()
+        try:
+            common = datetime.fromtimestamp(absolute_start(infos, starts), timezone.utc).isoformat()
+        except ValueError:
+            pass  # Audio can align files without inventing an absolute clock.
+    if common:
         command += ["-metadata", "creation_time=" + common,
                     "-metadata", "com.apple.quicktime.creationdate=" + common]
     for view, info in zip(("first", "third"), infos):
@@ -102,7 +111,7 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
     ]
     # Reuse the same decoded/cropped frames for all three outputs.
     for index, view in enumerate(("first", "third")):
-        individual = workdir / (name + "_" + view + ".mp4")
+        individual = workdir / video_names(name)[view]
         command += ["-map", f"[solo{index}]"]
         if infos[index]["audio"]:
             command += ["-map", f"{index}:a:0", "-af", "asetpts=PTS-STARTPTS",
@@ -112,7 +121,7 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
             "-metadata", "viewpair_source=" + json.dumps(metadata["sources"][index], ensure_ascii=False),
             "-metadata", "viewpair_processing=" + json.dumps(metadata["processing"]),
         ]
-        if mode == "timestamp":
+        if common:
             command += ["-metadata", "creation_time=" + common,
                         "-metadata", "com.apple.quicktime.creationdate=" + common]
         command += ["-t", str(duration), "-c:v", "libx264", "-preset", "fast", "-crf", "20",

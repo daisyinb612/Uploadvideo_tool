@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-from config import SERVER_DIR, STATIC_DIR
+from config import SERVER_DIR, SERVER_PUBLIC_BASE, STATIC_DIR
 from services.jobs import BusyError
 
 
@@ -81,6 +81,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if self.path == "/api/naming":
                 return self.json(self.manager.preview(payload))
+            if self.path == "/api/check-existing":
+                return self.json(self.manager.check_existing(payload))
             if self.path == "/api/jobs":
                 return self.json(self.manager.create(payload))
             return self.send_error(404)
@@ -148,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/config":
-            return self.json({"output": str(SERVER_DIR), "local_output": str(self.manager.paths.outputs)})
+            return self.json({"output": str(SERVER_DIR), "local_output": str(self.manager.paths.outputs), "public_base": SERVER_PUBLIC_BASE})
         if path.startswith("/api/jobs/"):
             job = self.manager.jobs.get(path.rsplit("/", 1)[1])
             return self.json(job or {"error": "任务不存在"}, 200 if job else 404)

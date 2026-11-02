@@ -60,8 +60,10 @@
 <div class="label">导出命名</div>
 <div class="naming-fields">
 <div>
-<label class="label">① 日期时间 · 自动读取</label>
-<div id="captureTime" class="hint">选择两个视频后自动读取</div>
+<label class="label" for="captureTime">① 日期时间 · 北京时间</label>
+<input id="captureTime" type="datetime-local" step="1" aria-label="命名日期时间（北京时间）">
+<button type="button" class="replace-video" id="readTime">重新读取视频时间</button>
+<div class="hint">自动读取后也可修改；读取失败可手动填写。仅用于命名。</div>
 <div class="hint" id="timeSource">
 </div>
 </div>
@@ -97,17 +99,15 @@
 <div style="margin-top:24px;padding-top:20px;border-top:1px solid #ecede7">
 <label class="label" for="align">时间对齐方式</label>
 <select id="align" style="padding:12px;border:1px solid #d6ddce;border-radius:8px;font-size:14px">
-<option value="timestamp">自动 · 按拍摄时间戳对齐</option>
+<option value="timestamp">自动 · 音频校准与拍摄时间</option>
 <option value="already">已对齐 · 两条视频从起点同时播放</option>
 </select>
-<div class="hint">自动模式：Rokid 读取原始文件名中的开始时间（北京时间），iPhone 读取拍摄元数据。按共同时间范围裁切视频和 Motion CSV；秒级时间及设备时钟误差可能导致动作偏差，尚未进行音频校正。</div>
+<div class="hint">自动模式优先用三段音频核对动作时间；无可用音频时参考原始拍摄时间。异常时间差会停止处理，避免将录制完成时间误当起点。视频与 Motion CSV 按校准后的共同时间截取；命名日期不改变对齐。</div>
 <div class="hint" id="timestamps">
 </div>
 </div>
 <div style="margin-top:20px">
-<label class="toggle">
-<input id="syncServer" type="checkbox">同时保存一份到服务器 /mnt/skill/mess</label>
-<input id="serverPassword" type="password" hidden autocomplete="off" placeholder="服务器密码（仅本次使用，不保存）" aria-label="服务器密码" style="padding:10px;border:1px solid #d6ddce;border-radius:8px;width:min(100%,360px)">
+<div class="label">处理结果自动保存一份到服务器 /mnt/skill/mess</div>
 </div>
 <label class="toggle" style="margin-top:20px">
 <input id="downloadTogether" type="checkbox" checked>处理完成后，将所有结果打包下载（可选）</label>
@@ -126,7 +126,8 @@
 </div>
 </div>
 <div class="copy-fields">
-  <div class="hint">复制任务信息（本地链接，导出完成后可访问）</div>
+  <div class="hint">复制任务信息（服务器 HTTPS 地址）</div>
+  <div class="hint" id="serverLinkStatus" role="status"></div>
   <label for="copyTask">task_name</label>
   <div class="copy-row"><input id="copyTask" readonly><button type="button" data-copy="copyTask">复制</button></div>
   <label for="copyFirst">video_first</label>
@@ -150,7 +151,7 @@
 <a class="download" id="bundleDownload" style="display:inline-block;margin-bottom:12px">打包下载全部结果 ZIP ↓</a> <a class="download" id="download">下载视频 ↓</a> <a class="download" id="motionDownload" hidden>下载同步 Motion CSV ↓</a> <a class="download" id="metadataDownload" style="background:#78856d">下载原始信息 JSON ↓</a>
 </section>
 </main>
-<footer>本地保留导出文件；勾选服务器同步时，将 MP4、Motion CSV 和元数据一同保存到 /mnt/skill/mess。</footer>
+<footer>正式结果保存到服务器 /mnt/skill/mess。本地仅临时处理，停止服务后清理；需要下载时请在停止前完成。</footer>
 <script type="module" src="/static/app.js">
 </script>
 </html>

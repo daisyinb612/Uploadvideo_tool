@@ -9,7 +9,8 @@ def probe(path):
     data = json.loads(p.stdout)
     v = next((s for s in data['streams'] if s['codec_type'] == 'video'))
     tags = [data.get('format', {}).get('tags', {})] + [s.get('tags', {}) for s in data['streams']]
-    created = next((t.get('com.apple.quicktime.creationdate') or t.get('creation_time') for t in tags if t.get('com.apple.quicktime.creationdate') or t.get('creation_time')), None)
+    created = next((t[key] for key in ('com.apple.quicktime.creationdate', 'creation_time')
+                    for t in tags if t.get(key)), None)
     rotation = next((abs(float(x.get('rotation', 0))) for x in v.get('side_data_list', []) if x.get('side_data_type') == 'Display Matrix'), 0)
     (w, h) = (v['width'], v['height'])
     if round(rotation) % 180 == 90:
@@ -30,16 +31,31 @@ def capture_time(info):
             pass
     if not info.get('time_warning') and info.get('creation_time'):
         try:
-            dt = datetime.fromisoformat(info['creation_time'].replace('Z', '+00:00'))
+            # Python 3.9 requires a colon in timezone offsets such as iPhone +0800.
+            stamp = re.sub(r'([+-]\d{2})(\d{2})$', r'\1:\2', info['creation_time'].strip())
+            dt = datetime.fromisoformat(stamp.replace('Z', '+00:00'))
             if dt.tzinfo is not None:
                 return (dt, '拍摄元数据')
         except ValueError:
             pass
     raise ValueError('未找到可靠的拍摄起点：请保留 Rokid 原始 vid-日期-时间 文件名或 iPhone 拍摄元数据')
 
-def naming_time(infos):
+def naming_time(infos, manual=None):
+    if manual is not None:
+        try:
+            if not isinstance(manual, str):
+                raise ValueError()
+            dt = datetime.strptime(manual, '%Y%m%d_%H%M%S')
+            if dt.strftime('%Y%m%d_%H%M%S') != manual:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ValueError('请填写有效日期时间（北京时间，格式 YYYYMMDD_HHMMSS）')
+        return {'value': manual, 'display': dt.strftime('%Y-%m-%d %H:%M:%S') + '（北京时间）',
+                'source': '手动设置（仅用于命名，不改变视频对齐时间）'}
     from zoneinfo import ZoneInfo
     for idx in (1, 0):
+        if not infos[idx]:
+            continue
         try:
             (dt, source) = capture_time(infos[idx])
             dt = dt.astimezone(ZoneInfo('Asia/Shanghai'))
@@ -71,11 +87,21 @@ def absolute_start(infos, starts):
             pass
     raise ValueError('Motion 裁切需要可靠的绝对拍摄起点')
 
-def build_name(infos, role, content):
+def build_name(infos, role, content, manual=None):
     for (label, value) in [('角色', role), ('内容', content)]:
         if not isinstance(value, str) or not re.fullmatch('[\\w-]{1,40}', value):
             raise ValueError(label + '仅支持文字、数字、下划线和短横线（最多40字）')
-    return naming_time(infos)['value'] + '_' + role + '_' + content + '_firstthird'
+    return naming_time(infos, manual)['value'] + '_' + role + '_' + content + '_firstthird'
+
+def video_names(name):
+    """Derive all video filenames from the same task and duplicate suffix."""
+    stem, marker, suffix = name.rpartition('_firstthird')
+    if not marker:
+        stem, suffix = name, ''
+    return {'first': stem + '_first' + suffix + '.mp4',
+            'third': stem + '_third' + suffix + '.mp4',
+            'video': name + '.mp4'}
+
 
 def detect(path, info):
     boxes = []

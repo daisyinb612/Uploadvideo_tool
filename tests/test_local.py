@@ -13,9 +13,9 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from config import Paths
+from config import Paths, SERVER_PUBLIC_BASE
 from services.jobs import JobManager
-from services.media import capture_time
+from services.media import capture_time, naming_time, video_names
 from services.motion import trim_motion
 from web import Server
 
@@ -25,6 +25,33 @@ class LocalRules(unittest.TestCase):
         info = {"original_filename": "vid-20261026-125402-c2.MP4",
                 "creation_time": "2099-01-01T00:00:00Z", "time_warning": "ambiguous"}
         self.assertEqual(capture_time(info)[0].isoformat(), "2026-10-26T12:54:02+08:00")
+
+    def test_iphone_compact_offset_and_single_view_naming(self):
+        info = {"creation_time": "2026-10-30T10:48:17+0800"}
+        self.assertEqual(capture_time(info)[0].isoformat(), "2026-10-30T10:48:17+08:00")
+        self.assertEqual(naming_time([None, info])["value"], "20261030_104817")
+        self.assertEqual(naming_time([info, None])["value"], "20261030_104817")
+
+    def test_manual_naming_without_video_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manager = JobManager(Paths(Path(temp)/'uploads', Path(temp)/'outputs'))
+            payload = dict(role='teacher', content='hotcoffee', naming_time='20261101_123456')
+            preview = manager.preview(payload)
+            self.assertEqual(preview['task_name'], '20261101_123456_teacher_hotcoffee')
+            self.assertEqual(preview['path'], '/mnt/skill/mess/20261101_123456_teacher_hotcoffee_firstthird.mp4')
+            self.assertEqual(preview['video_first_third'], SERVER_PUBLIC_BASE + preview['name'] + '.mp4')
+            for invalid in ('', '20260230_123456', '20261101_250000', '../20261101', 123):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    manager.preview(dict(payload, naming_time=invalid))
+
+    def test_individual_view_filenames_and_collisions(self):
+        name = '20261101_123456_teacher_icecoffee_firstthird'
+        self.assertEqual(video_names(name)['first'], '20261101_123456_teacher_icecoffee_first.mp4')
+        self.assertEqual(video_names(name + '_1')['third'], '20261101_123456_teacher_icecoffee_third_1.mp4')
+        with tempfile.TemporaryDirectory() as temp:
+            manager = JobManager(Paths(Path(temp)/'uploads', Path(temp)/'outputs'))
+            (manager.paths.outputs / video_names(name)['first']).touch()
+            self.assertEqual(manager.available_name(name), name + '_1')
 
     def test_motion_boundary_and_original_columns(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -44,8 +71,8 @@ class LocalRules(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             manager = JobManager(Paths(Path(temp)/'uploads', Path(temp)/'outputs'))
             (manager.paths.outputs/'task_motion.csv').touch()
-            (manager.paths.outputs/'task（1）.metadata.json').touch()
-            self.assertEqual(manager.available_name('task'), 'task（2）')
+            (manager.paths.outputs/'task_1.metadata.json').touch()
+            self.assertEqual(manager.available_name('task'), 'task_2')
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
@@ -97,7 +124,10 @@ class LocalWorkflow(unittest.TestCase):
                         with request('/api/upload', file.read_bytes(), 'PUT') as result:
                             videos.append(json.load(result)['token'])
                     payload = dict(first=videos[0], third=videos[1], role='teacher',
-                                   content='icecoffee', align='timestamp')
+                                   content='icecoffee', align='timestamp', sync_server=False)
+                    single = post('/api/naming', dict(first=videos[0], role='teacher', content='icecoffee'))
+                    self.assertEqual(single['time']['value'], '20261026_180000')
+                    self.assertTrue(single['video_first'].startswith(SERVER_PUBLIC_BASE))
                     for _ in range(3):
                         preview = post('/api/naming', payload)
                     self.assertEqual(cached_probe.call_count, 2)
@@ -108,8 +138,11 @@ class LocalWorkflow(unittest.TestCase):
                     job = wait(jid)
                     self.assertEqual(job['filename'], preview['name']+'.mp4')
                     self.assertEqual(job['task_name'], '20261026_180001_teacher_icecoffee')
+                    self.assertFalse(job['server_synced'])
                     for key in ('video_first', 'video_third', 'video_first_third'):
-                        with request(job[key], headers={'Range': 'bytes=0-15'}) as result:
+                        self.assertEqual(job[key], preview[key])
+                        self.assertTrue(job[key].startswith(SERVER_PUBLIC_BASE))
+                        with request('/videos/' + job[key].rsplit('/', 1)[1], headers={'Range': 'bytes=0-15'}) as result:
                             self.assertEqual(result.status, 206)
                             self.assertEqual(len(result.read()), 16)
                     for key in ('first_path', 'third_path'):
@@ -131,10 +164,30 @@ class LocalWorkflow(unittest.TestCase):
                     self.assertEqual(metadata['motion']['rows'], 2)
                     self.assertEqual(len(metadata['sources']), 2)
                     second_preview = post('/api/naming', payload)
-                    self.assertIn('（1）', second_preview['name'])
+                    self.assertTrue(second_preview['name'].endswith('_1'))
+                    self.assertEqual(second_preview['video_first'], SERVER_PUBLIC_BASE + '20261026_180001_teacher_icecoffee_first_1.mp4')
+                    self.assertNotIn('%', second_preview['video_first'])
                     # The same selected uploads remain usable for another local test.
-                    second = wait(post('/api/jobs', payload)['id'])
+                    payload.update(sync_server=True)
+                    with patch.object(manager, 'check_existing', return_value={'existing': False, 'name': second_preview['name']}), \
+                         patch('services.jobs.server_password', return_value='test-only'), \
+                         patch('services.access_check.verify_video', return_value={'accessible': True}) as access, \
+                         patch('services.storage.sync_exports', return_value=['/mnt/skill/mess/test.mp4']) as sync:
+                        second = wait(post('/api/jobs', payload)['id'])
+                        self.assertTrue(second['server_synced'])
+                        self.assertTrue(second['links_verified'])
+                        self.assertEqual(access.call_count, 3)
+                        self.assertEqual(sync.call_count, 1)
+                        self.assertEqual(len(sync.call_args[0][0]), 5)
+                        self.assertEqual(sync.call_args[0][1], 'test-only')
+                        self.assertNotIn('server_password', second)
                     self.assertEqual(second['filename'], second_preview['name']+'.mp4')
+                    payload.update(naming_time='20261101_123456', sync_server=False)
+                    manual_preview = post('/api/naming', payload)
+                    manual_job = wait(post('/api/jobs', payload)['id'])
+                    self.assertEqual(manual_job['filename'], manual_preview['name'] + '.mp4')
+                    self.assertEqual(manual_job['task_name'], '20261101_123456_teacher_icecoffee')
+                    self.assertEqual(manual_job['details']['starts'], [1.0, 0])
                     self.assertEqual(cached_probe.call_count, 2)
                 with request('/') as result:
                     self.assertNotIn('writeFeishu', result.read().decode())
