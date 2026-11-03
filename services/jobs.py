@@ -8,16 +8,36 @@ from urllib.parse import quote
 
 from config import SERVER_DIR, SERVER_PUBLIC_BASE, server_password
 from .media import build_name, capture_time, naming_time, probe, video_names
-from .processing import render
+from .processing import render, render_single
+from .roles import normalize_role
 
 
-def public_fields(name):
-    return {
+def public_fields(name, mode="both"):
+    fields = {
         "task_name": "".join(name.rsplit("_firstthird", 1)),
         "video_first": SERVER_PUBLIC_BASE + quote(video_names(name)["first"], safe=""),
         "video_third": SERVER_PUBLIC_BASE + quote(video_names(name)["third"], safe=""),
         "video_first_third": SERVER_PUBLIC_BASE + quote(name + ".mp4", safe=""),
     }
+    if mode in ('first', 'third'):
+        import re
+        fields = dict(task_name=re.sub(r'_(first|third)(?=_\d+$|$)', '', name),
+                      video_first='', video_third='', video_first_third='')
+        fields['video_' + mode] = SERVER_PUBLIC_BASE + quote(name + '.mp4', safe='')
+    return fields
+
+
+def selected_keys(payload):
+    mode = payload.get('mode', 'both')
+    if mode not in ('first', 'third', 'both', 'both_motion'):
+        raise ValueError('请选择上传模式')
+    return (mode,) if mode in ('first', 'third') else ('first', 'third')
+
+
+def task_name(infos, payload):
+    return build_name(infos, normalize_role(payload.get('project'), payload.get('role')), payload.get('content'), payload.get('naming_time'),
+                      payload.get('project'), payload.get('mode', 'both'))
+
 
 
 class BusyError(ValueError):
@@ -68,21 +88,22 @@ class JobManager:
         return name
 
     def preview(self, payload):
-        infos = [self.upload(payload[key], "video")["info"] if payload.get(key) else None
+        infos = [self.upload(payload[key], "video")["info"] if key in selected_keys(payload) and payload.get(key) else None
                  for key in ("first", "third")]
-        name = self.available_name(build_name(infos, payload.get("role"), payload.get("content"), payload.get("naming_time")))
+        name = self.available_name(task_name(infos, payload))
         return {
             "time": naming_time(infos, payload.get("naming_time")), "name": name,
             "path": str(SERVER_DIR / (name + ".mp4")),
             "motion_path": str(SERVER_DIR / (name + "_motion.csv")),
-            **public_fields(name),
+            **public_fields(name, payload.get("mode", "both")),
         }
 
     def check_existing(self, payload):
-        from urllib.request import Request, urlopen
+        from urllib.request import Request
+        from .access_check import open_public
         from urllib.error import HTTPError
-        infos = [self.upload(payload[key], "video")["info"] for key in ("first", "third")]
-        base = build_name(infos, payload.get("role"), payload.get("content"), payload.get("naming_time"))
+        infos = [self.upload(payload[key], "video")["info"] if key in selected_keys(payload) else None for key in ("first", "third")]
+        base = task_name(infos, payload)
         existing = False
         name = base
         number = 0
@@ -90,7 +111,10 @@ class JobManager:
             found = False
             for key in ("video_first", "video_third", "video_first_third"):
                 try:
-                    with urlopen(Request(public_fields(name)[key], method='HEAD'), timeout=15):
+                    url = public_fields(name, payload.get('mode', 'both'))[key]
+                    if not url:
+                        continue
+                    with open_public(Request(url, method='HEAD')):
                         found = True
                         break
                 except HTTPError as exc:
@@ -105,10 +129,13 @@ class JobManager:
                 raise ValueError('同名版本过多，请更换命名')
 
     def create(self, payload):
-        records = [self.upload(payload.get(key), "video") for key in ("first", "third")]
-        motion = self.upload(payload["motion"], "motion") if payload.get("motion") else None
-        infos = [record["info"] for record in records]
-        base = build_name(infos, payload.get("role"), payload.get("content"), payload.get("naming_time"))
+        keys = selected_keys(payload)
+        records = [self.upload(payload.get(key), "video") for key in keys]
+        if payload.get('mode') == 'both_motion' and not payload.get('motion'):
+            raise ValueError('此模式需要上传 Motion CSV')
+        motion = self.upload(payload["motion"], "motion") if payload.get("motion") and payload.get('mode', 'both_motion') == 'both_motion' else None
+        infos = [next((record["info"] for key, record in zip(keys, records) if key == view), None) for view in ("first", "third")]
+        base = task_name(infos, payload)
         if payload.get("align") not in ("timestamp", "already"):
             raise ValueError("请选择有效的对齐方式")
         password = server_password() if payload.get("sync_server", True) else ""
@@ -125,7 +152,7 @@ class JobManager:
             self.jobs[jid] = {"status": "running", "stage": "准备处理", "progress": 0,
                               "reserved_name": name}
             # Freeze selected files/settings for this job. Password is never stored in job state.
-            settings = {"name": name, "align": payload["align"],
+            settings = {"name": name, "mode": payload.get("mode", "both"), "align": payload["align"],
                         "sync_server": bool(payload.get("sync_server", True)),
                         "server_password": password}
             threading.Thread(target=self.run, args=(jid, records, motion, settings), daemon=True).start()
@@ -145,11 +172,12 @@ class JobManager:
         try:
             # All exports are prepared together; failure cannot leave half a published set.
             with tempfile.TemporaryDirectory(prefix=".processing-", dir=self.paths.outputs) as work:
-                artifacts, motion_info = render(
+                renderer = render if len(records) == 2 else render_single
+                artifacts, motion_info = renderer(
                     [record["path"] for record in records],
                     [record["info"] for record in records],
                     motion["path"] if motion else None,
-                    Path(work), settings["name"], settings["align"], report,
+                    Path(work), settings["name"], settings["align"] if len(records) == 2 else settings["mode"], report,
                 )
                 published = {}
                 try:
@@ -165,9 +193,10 @@ class JobManager:
             job.update(url="/outputs/" + jid, output=str(video), path=str(video),
                        filename=video.name, metadata_path=str(published["metadata"]),
                        metadata_url="/metadata/" + jid,
-                       first_path=str(published["first"]), third_path=str(published["third"]),
+                       first_path=str(published["first"]) if len(records) == 2 else None,
+                       third_path=str(published["third"]) if len(records) == 2 else None,
                        server_synced=False,
-                       **public_fields(settings["name"]))
+                       **public_fields(settings["name"], settings["mode"]))
             if "motion" in published:
                 job.update(motion_url="/motion/" + jid, motion_path=str(published["motion"]),
                            motion_filename=published["motion"].name, motion_info=motion_info)
@@ -179,9 +208,9 @@ class JobManager:
                     job["server_synced"] = True
                     report("验证公网视频访问", 99)
                     from .access_check import verify_video
-                    job["access_checks"] = [verify_video(job[key], published[kind].stat().st_size)
+                    job["access_checks"] = [verify_video(job[key], published[kind if len(records) == 2 else "video"].stat().st_size)
                         for key, kind in (("video_first", "first"), ("video_third", "third"),
-                                          ("video_first_third", "video"))]
+                                          ("video_first_third", "video")) if job[key]]
                     job["links_verified"] = True
                 except Exception as exc:
                     job["sync_error"] = str(exc)

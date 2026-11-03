@@ -87,11 +87,11 @@ def absolute_start(infos, starts):
             pass
     raise ValueError('Motion 裁切需要可靠的绝对拍摄起点')
 
-def build_name(infos, role, content, manual=None):
-    for (label, value) in [('角色', role), ('内容', content)]:
+def build_name(infos, role, content, manual=None, project=None, mode="both"):
+    for (label, value) in [('角色', role), ('内容', content)] + ([('项目', project)] if project is not None else []):
         if not isinstance(value, str) or not re.fullmatch('[\\w-]{1,40}', value):
             raise ValueError(label + '仅支持文字、数字、下划线和短横线（最多40字）')
-    return naming_time(infos, manual)['value'] + '_' + role + '_' + content + '_firstthird'
+    return ((project + '_') if project else '') + naming_time(infos, manual)['value'] + '_' + role + '_' + content + '_' + (mode if mode in ('first', 'third') else 'firstthird')
 
 def video_names(name):
     """Derive all video filenames from the same task and duplicate suffix."""

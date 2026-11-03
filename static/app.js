@@ -1,7 +1,12 @@
-import { UploadSlot } from '/static/upload-slot.mjs';
+import { UploadSlot } from './upload-slot.mjs';
+
+// Resolve internal routes under the same mount directory as this module.
+const siteBase = new URL('../', import.meta.url);
+const appURL = path => new URL(/^https?:\/\//i.test(path) ? path : path.replace(/^\/+/, ''), siteBase).href;
 
 const $ = id => document.getElementById(id);
 let outputDir = '/mnt/skill/mess';
+let coffeeRoles = [];
 let publicBase = '';
 let namingVersion = 0;
 let namingTimer;
@@ -11,6 +16,53 @@ let busy = false;
 const previewURLs = {};
 const slots = {};
 
+function mode() { return $('uploadMode').value; }
+function views() { return mode() === 'first' ? ['first'] : mode() === 'third' ? ['third'] : mode() ? ['first', 'third'] : []; }
+function suffix() { return ['first', 'third'].includes(mode()) ? mode() : 'firstthird'; }
+function selection() {
+  return {mode: mode(), project: $('project').value.trim(),
+    ...Object.fromEntries(views().map(key => [key, slots[key].data?.token])),
+    ...(mode() === 'both_motion' ? {motion: slots.motion.data?.token} : {}),
+    role: selectedValue('role'), content: selectedValue('content'),
+    ...(manualTime ? {naming_time: inputTime()} : {})};
+}
+$('uploadMode').onchange = () => {
+  const active = views();
+  for (const button of document.querySelectorAll('[data-mode]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.mode === mode()));
+  }
+  $('uploadGrid').hidden = !mode();
+  for (const key of ['first', 'third']) $(key+'Card').hidden = !active.includes(key);
+  $('motionCard').hidden = mode() !== 'both_motion';
+  active.forEach((key, index) => {
+    $(key+'Card').querySelector('h2').textContent = `0${index+1} / ${key === 'first' ? '第一视角' : '第三视角'}`;
+    $(key+'Card').querySelector('.sub').textContent = active.length === 1 ? '单视角裁边与导出' : (key === 'first' ? '合成画面左侧 · 通常为竖向视频' : '合成画面右侧 · 通常为横向视频');
+  });
+  $('uploadGrid').style.gridTemplateColumns = `repeat(${active.length + (mode() === 'both_motion' ? 1 : 0)},minmax(0,1fr))`;
+  $('alignmentSettings').hidden = active.length !== 2;
+  $('viewSuffix').textContent = mode() ? suffix() : '选择模式后自动填充';
+  $('start').textContent = active.length === 2 ? '开始合成并导出 ↗' : '开始处理并导出 ↗';
+  $('modeHint').textContent = mode() === 'both_motion' ? '请上传两个视频和 Motion CSV。' : active.length === 2 ? '请上传两个视频，自动对齐后合成。' : mode() ? '上传一个视频，自动裁边后导出。' : '先选择模式，再上传对应素材。';
+  $('result').style.display = 'none';
+  if (!manualTime) {timeValue = '日期时间'; $('captureTime').value = '';}
+  scheduleNaming();
+};
+function renderRoleOptions() {
+  const previous = $('role').value;
+  const isCoffee = $('project').value.trim().toLowerCase() === 'coffee';
+  const choices = isCoffee ? coffeeRoles : [
+    {value:'teacher',name:'老师'}, {value:'student',name:'学生'}, {value:'custom',name:'自定义增加'}];
+  $('role').replaceChildren(...choices.map(role => {
+    const option = document.createElement('option');
+    option.value = role.value;
+    option.textContent = role.value === 'custom' ? '＋ 自定义增加' : `${role.value} · ${role.name}`;
+    return option;
+  }));
+  if (choices.some(role => role.value === previous)) $('role').value = previous;
+  $('customRole').hidden = $('role').value !== 'custom';
+}
+$('project').oninput = () => { renderRoleOptions(); scheduleNaming(); };
+
 function selectedValue(id) {
   const customId = 'custom' + id[0].toUpperCase() + id.slice(1);
   return $(id).value === 'custom' ? $(customId).value.trim() : $(id).value;
@@ -19,7 +71,7 @@ function selectedValue(id) {
 function requestUpload(file, kind, progress) {
   const xhr = new XMLHttpRequest();
   const promise = new Promise((resolve, reject) => {
-    xhr.open('PUT', kind === 'motion' ? '/api/motion-upload' : '/api/upload');
+    xhr.open('PUT', appURL(kind === 'motion' ? 'api/motion-upload' : 'api/upload'));
     xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
     xhr.upload.onprogress = event => {
       if (event.lengthComputable) progress(Math.round(event.loaded / event.total * 100));
@@ -43,7 +95,7 @@ function requestUpload(file, kind, progress) {
 function renderSlot(key, slot) {
   const label = $(key + 'Name');
   if (!slot.file) {
-    label.textContent = key === 'motion' ? '可选：尚未选择 Motion CSV' : '尚未选择文件';
+    label.textContent = key === 'motion' ? '尚未选择 Motion CSV' : '尚未选择文件';
   } else if (slot.error) {
     label.textContent = slot.file.name + ' · 上传失败：' + slot.error;
   } else if (slot.data) {
@@ -85,16 +137,18 @@ for (const key of ['first', 'third', 'motion']) {
 function showNames(name, path, motionPath) {
   $('namePreview').textContent = name + '.mp4';
   $('motionNamePreview').textContent = name + '_motion.csv';
+  $('motionNamePreview').hidden = mode() !== 'both_motion';
   $('destination').textContent = '服务器目标：' + path;
   $('motionDestination').textContent = '服务器 CSV：' + motionPath;
-  $('copyTask').value = name.replace(/_firstthird(?=（\d+）$|_\d+$|$)/, '');
-  const marker = name.lastIndexOf('_firstthird');
+  $('copyTask').value = name.replace(/_(firstthird|first|third)(?=_\d+$|$)/, '');
+  const marker = name.lastIndexOf('_' + suffix());
   const stem = marker < 0 ? name : name.slice(0, marker);
-  const duplicate = marker < 0 ? '' : name.slice(marker + '_firstthird'.length);
+  const duplicate = marker < 0 ? '' : name.slice(marker + ('_' + suffix()).length);
   for (const [id, filename] of [['copyFirst', stem + '_first' + duplicate + '.mp4'],
                                ['copyThird', stem + '_third' + duplicate + '.mp4'],
                                ['copyCombined', name + '.mp4']]) {
-    $(id).value = publicBase && timeValue !== '日期时间'
+    const available = id === 'copyCombined' ? views().length === 2 : views().includes(id === 'copyFirst' ? 'first' : 'third');
+    $(id).value = available && publicBase && timeValue !== '日期时间'
       ? publicBase + encodeURIComponent(filename) : '';
     $(id).placeholder = '读取拍摄时间并配置命名后生成';
   }
@@ -109,7 +163,7 @@ function scheduleNaming() {
   ++namingVersion; // Invalidate in-flight previews immediately, including during debounce.
   clearTimeout(namingTimer);
   if (!busy) syncOption();
-  const name = `${timeValue}_${selectedValue('role') || '角色'}_${selectedValue('content') || '内容'}_firstthird`;
+  const name = `${$('project').value.trim() || '项目'}_${timeValue}_${selectedValue('role') || '角色'}_${selectedValue('content') || '内容'}_${suffix()}`;
   showNames(name, `${outputDir}/${name}.mp4`, `${outputDir}/${name}_motion.csv`);
   for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = true;
   namingTimer = setTimeout(updateName, 250);
@@ -117,19 +171,13 @@ function scheduleNaming() {
 
 async function updateName() {
   const version = namingVersion;
-  if (!manualTime && !slots.first.data && !slots.third.data) {
+  if (!mode() || (!manualTime && !views().some(key => slots[key].data))) {
     $('timeSource').textContent = ['first', 'third'].some(key => slots[key].file)
       ? '视频上传完成后自动读取拍摄时间，也可手动填写' : '选择视频后自动读取，也可手动填写';
     return;
   }
   try {
-    const data = await post('/api/naming', {
-      first: slots.first.data?.token,
-      third: slots.third.data?.token,
-      ...(manualTime ? { naming_time: inputTime() } : {}),
-      role: selectedValue('role'),
-      content: selectedValue('content'),
-    });
+    const data = await post('/api/naming', selection());
     if (version !== namingVersion) return;
     timeValue = data.time.value;
     if (!manualTime) {
@@ -185,14 +233,16 @@ function syncOption() {
   $('serverLinkStatus').textContent = '地址预览（尚未验证可访问）· 保存目录：/mnt/skill/mess · 访问入口：' + publicBase;
 }
 syncOption();
-fetch('/api/config').then(response => response.json()).then(data => {
+fetch(appURL('api/config')).then(response => response.json()).then(data => {
   outputDir = data.output;
   publicBase = data.public_base;
+  coffeeRoles = data.coffee_roles;
+  renderRoleOptions();
   scheduleNaming();
 }).catch(() => { $('destination').textContent = '读取保存位置失败，请刷新页面'; });
 
 async function post(url, payload) {
-  const response = await fetch(url, {
+  const response = await fetch(appURL(url), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
@@ -214,7 +264,7 @@ function setBusy(value) {
 }
 
 function downloadLink(id, url, filename) {
-  $(id).href = url;
+  $(id).href = appURL(url);
   $(id).download = filename;
 }
 
@@ -226,16 +276,16 @@ function showResult(jid, job, autoDownload) {
   $('motionDownload').hidden = !job.motion_url;
   if (job.motion_url) downloadLink('motionDownload', job.motion_url, job.motion_filename);
   $('copyTask').value = job.task_name;
-  $('copyFirst').value = new URL(job.video_first, location.origin).href;
-  $('copyThird').value = new URL(job.video_third, location.origin).href;
-  $('copyCombined').value = new URL(job.video_first_third, location.origin).href;
+  $('copyFirst').value = job.video_first ? appURL(job.video_first) : '';
+  $('copyThird').value = job.video_third ? appURL(job.video_third) : '';
+  $('copyCombined').value = job.video_first_third ? appURL(job.video_first_third) : '';
   for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = !job.links_verified;
   if (!job.links_verified) {
     for (const id of ['copyFirst', 'copyThird', 'copyCombined']) $(id).value = '';
     for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = true;
   }
   $('copyStatus').textContent = job.links_verified ? '服务器视频访问校验通过' : '链接未通过验证，请查看保存错误';
-  $('output').src = job.url;
+  $('output').src = appURL(job.url);
   const messages = ['本次临时结果：' + job.path];
   if (job.motion_path) messages.push('CSV：' + job.motion_path);
   if (job.server_paths) messages.push('服务器：' + job.server_paths.join('，'));
@@ -251,7 +301,7 @@ function showResult(jid, job, autoDownload) {
 
 async function waitForJob(jid) {
   while (true) {
-    const response = await fetch('/api/jobs/' + jid);
+    const response = await fetch(appURL('api/jobs/' + jid));
     const job = await response.json();
     if (!response.ok) throw Error(job.error || '读取任务状态失败');
     status(job.stage + ' · ' + job.progress + '%', job.progress);
@@ -277,31 +327,21 @@ $('start').onclick = async () => {
   try {
     status('准备视频信息', 0);
     await Promise.all(Object.values(slots).map(slot => slot.pending));
-    if (!slots.first.data || !slots.third.data) throw Error('请先选择并成功上传两个视频');
-    if (slots.motion.file && !slots.motion.data) throw Error('Motion CSV 上传未成功');
-    const infoText = ['first', 'third'].map(key => {
+    if (!mode()) throw Error('请先选择上传模式');
+    if (views().some(key => !slots[key].data)) throw Error('请上传当前模式需要的视频');
+    if (mode() === 'both_motion' && !slots.motion.data) throw Error('Motion CSV 上传未成功');
+    const infoText = views().map(key => {
       const info = slots[key].data.info;
       return (key === 'first' ? '第一视角：' : '第三视角：') + (info.capture_time || info.creation_time || '未找到');
     });
     $('timestamps').textContent = infoText.join('；');
     const autoDownload = $('downloadTogether').checked;
-    const check = await post('/api/check-existing', {
-      first: slots.first.data.token, third: slots.third.data.token,
-      role: selectedValue('role'), content: selectedValue('content'),
-      ...(manualTime ? { naming_time: inputTime() } : {}),
-    });
+    const check = await post('/api/check-existing', selection());
     if (check.existing && !window.confirm('这个任务已上传过，是否重新上传？新版本将使用 _1、_2 编号，不覆盖旧文件。')) {
       status('已取消重新上传', 0);
       return;
     }
-    const result = await post('/api/jobs', {
-      confirm_reupload: check.existing,
-      first: slots.first.data.token, third: slots.third.data.token,
-      motion: slots.motion.data?.token,
-      role: selectedValue('role'), content: selectedValue('content'),
-      ...(manualTime ? { naming_time: inputTime() } : {}),
-      align: $('align').value, sync_server: true,
-    });
+    const result = await post('/api/jobs', {...selection(), confirm_reupload: check.existing, align: $('align').value, sync_server: true});
     const job = await waitForJob(result.id);
     showResult(result.id, job, autoDownload);
     // Keep the completed task's name and links until the user changes the configuration.
@@ -330,3 +370,12 @@ $('copyRow').onclick = () => copyText(
 $('copyHeader').onclick = () => copyText(
   ['task_name', 'video_first', 'video_third', 'video_first_third'].join('\t')
 );
+
+for (const button of document.querySelectorAll('[data-mode]')) {
+  button.onclick = () => {
+    if (busy) return;
+    $('uploadMode').value = button.dataset.mode;
+    $('uploadMode').onchange();
+  };
+}
+$('uploadMode').onchange();

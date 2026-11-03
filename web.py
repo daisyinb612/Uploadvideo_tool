@@ -12,6 +12,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from config import SERVER_DIR, SERVER_PUBLIC_BASE, STATIC_DIR
 from services.jobs import BusyError
+from services.roles import COFFEE_ROLES
 
 
 class Server(ThreadingHTTPServer):
@@ -150,7 +151,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/config":
-            return self.json({"output": str(SERVER_DIR), "local_output": str(self.manager.paths.outputs), "public_base": SERVER_PUBLIC_BASE})
+            return self.json({"output": str(SERVER_DIR), "local_output": str(self.manager.paths.outputs), "public_base": SERVER_PUBLIC_BASE, "coffee_roles": COFFEE_ROLES})
         if path.startswith("/api/jobs/"):
             job = self.manager.jobs.get(path.rsplit("/", 1)[1])
             return self.json(job or {"error": "任务不存在"}, 200 if job else 404)

@@ -145,3 +145,35 @@ def render(paths, infos, motion_source, workdir, name, mode, report):
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
     artifacts.update(video=output, metadata=metadata_path)
     return artifacts, motion_info
+
+
+def render_single(paths, infos, motion_source, workdir, name, view, report):
+    path, info = paths[0], infos[0]
+    report('检测黑边', 2)
+    w, h, x, y = detect(path, info)
+    height = min(720, h)//2*2
+    width = max(2, round(w/h*height/2)*2)
+    report('单视角导出', 5, {'crops': [[w,h,x,y]], 'size': f'{width} × {height}',
+                                'duration': info['duration'], 'starts': [0]})
+    output = workdir/(name + '.mp4')
+    command = ['ffmpeg','-v','error','-nostdin','-i',str(path),'-map','0:v:0']
+    if info['audio']:
+        command += ['-map','0:a:0','-c:a','aac','-b:a','160k']
+    command += ['-vf',f'crop={w}:{h}:{x}:{y},scale={width}:{height},setsar=1,fps=30',
+                '-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p',
+                '-map_metadata','0','-movflags','+faststart+use_metadata_tags',
+                '-progress','pipe:1','-n',str(output)]
+    log = workdir/'ffmpeg.log'
+    with log.open('w') as errors:
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True) as process:
+            for line in process.stdout:
+                if line.startswith('out_time_us='):
+                    report('单视角导出', min(98,5+int(float(line.split('=')[1])/1e6/info['duration']*93)))
+            if process.wait():
+                raise RuntimeError(log.read_text()[-1500:])
+    probe(output)
+    metadata = workdir/(name+'.metadata.json')
+    metadata.write_text(json.dumps({'sources':[{'view':view,'filename':info['original_filename'],
+        'probe':info['metadata']}], 'processing':{'mode':view,'crop':[w,h,x,y],
+        'duration_seconds':info['duration'],'output_dimensions':[width,height]}},ensure_ascii=False,indent=2))
+    return {'video':output,'metadata':metadata}, None
