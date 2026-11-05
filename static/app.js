@@ -152,6 +152,8 @@ function showNames(name, path, motionPath) {
       ? publicBase + encodeURIComponent(filename) : '';
     $(id).placeholder = '读取拍摄时间并配置命名后生成';
   }
+  $('copyMotion').value = mode() === 'both_motion' && publicBase && timeValue !== '日期时间'
+    ? publicBase + encodeURIComponent(name + '_motion.csv') : '';
   if (timeValue === '日期时间') $('copyTask').value = '';
   for (const button of document.querySelectorAll('[data-copy], #copyRow')) {
     button.disabled = button.dataset.copy !== 'copyTask' || timeValue === '日期时间';
@@ -171,6 +173,16 @@ function scheduleNaming() {
 
 async function updateName() {
   const version = namingVersion;
+  const activeSlots = views().map(key => slots[key]);
+  const failed = activeSlots.find(slot => slot.error);
+  if (!manualTime && failed) {
+    $('timeSource').textContent = '视频上传失败：' + failed.error + '；请重新选择文件后再读取时间';
+    return;
+  }
+  if (!manualTime && activeSlots.some(slot => slot.file && !slot.data)) {
+    $('timeSource').textContent = '视频仍在上传，完成后自动读取拍摄时间';
+    return;
+  }
   if (!mode() || (!manualTime && !views().some(key => slots[key].data))) {
     $('timeSource').textContent = ['first', 'third'].some(key => slots[key].file)
       ? '视频上传完成后自动读取拍摄时间，也可手动填写' : '选择视频后自动读取，也可手动填写';
@@ -191,9 +203,10 @@ async function updateName() {
     $('copyFirst').value = data.video_first;
     $('copyThird').value = data.video_third;
     $('copyCombined').value = data.video_first_third;
+    $('copyMotion').value = data.motion || '';
   } catch (error) {
     if (version !== namingVersion) return;
-    for (const id of ['copyTask', 'copyFirst', 'copyThird', 'copyCombined']) $(id).value = '';
+    for (const id of ['copyTask', 'copyFirst', 'copyThird', 'copyCombined', 'copyMotion']) $(id).value = '';
     for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = true;
     if (!manualTime) {
       timeValue = '日期时间';
@@ -279,12 +292,13 @@ function showResult(jid, job, autoDownload) {
   $('copyFirst').value = job.video_first ? appURL(job.video_first) : '';
   $('copyThird').value = job.video_third ? appURL(job.video_third) : '';
   $('copyCombined').value = job.video_first_third ? appURL(job.video_first_third) : '';
+  $('copyMotion').value = job.motion ? appURL(job.motion) : '';
   for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = !job.links_verified;
   if (!job.links_verified) {
-    for (const id of ['copyFirst', 'copyThird', 'copyCombined']) $(id).value = '';
+    for (const id of ['copyFirst', 'copyThird', 'copyCombined', 'copyMotion']) $(id).value = '';
     for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = true;
   }
-  $('copyStatus').textContent = job.links_verified ? '服务器视频访问校验通过' : '链接未通过验证，请查看保存错误';
+  $('copyStatus').textContent = job.links_verified ? '服务器文件访问校验通过' : '链接未通过验证，请查看保存错误';
   $('output').src = appURL(job.url);
   const messages = ['本次临时结果：' + job.path];
   if (job.motion_path) messages.push('CSV：' + job.motion_path);
@@ -365,10 +379,10 @@ for (const button of document.querySelectorAll('[data-copy]')) {
   button.onclick = () => copyText($(button.dataset.copy).value);
 }
 $('copyRow').onclick = () => copyText(
-  ['copyTask', 'copyFirst', 'copyThird', 'copyCombined'].map(id => $(id).value).join('\t')
+  ['copyTask', 'copyFirst', 'copyThird', 'copyCombined', 'copyMotion'].map(id => $(id).value).join('\t')
 );
 $('copyHeader').onclick = () => copyText(
-  ['task_name', 'video_first', 'video_third', 'video_first_third'].join('\t')
+  ['task_name', 'video_first', 'video_third', 'video_first_third', 'motion'].join('\t')
 );
 
 for (const button of document.querySelectorAll('[data-mode]')) {

@@ -32,6 +32,13 @@ class LocalRules(unittest.TestCase):
         self.assertEqual(naming_time([None, info])["value"], "20261030_104817")
         self.assertEqual(naming_time([info, None])["value"], "20261030_104817")
 
+    def test_naming_uses_later_valid_capture_time(self):
+        early = {"creation_time": "2026-11-05T00:08:10Z"}
+        late = {"creation_time": "2026-11-05T08:08:12+0800"}
+        for infos in ([early, late], [late, early]):
+            self.assertEqual(naming_time(infos)["value"], "20261105_080812")
+        self.assertEqual(naming_time([late, {}])["value"], "20261105_080812")
+
     def test_manual_naming_without_video_metadata(self):
         with tempfile.TemporaryDirectory() as temp:
             manager = JobManager(Paths(Path(temp)/'uploads', Path(temp)/'outputs'))

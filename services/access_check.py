@@ -72,3 +72,16 @@ if __name__ == '__main__':
     except Exception as exc:
         print('访问校验失败：', exc)
         sys.exit(1)
+
+
+def verify_motion(url, expected_size=None):
+    with open_public(Request(url, headers={'Range': 'bytes=0-4095'})) as response:
+        data = response.readline(4096).decode('utf-8-sig')
+        if response.status not in (200, 206) or 'sample_time_iso8601' not in data.splitlines()[0]:
+            raise ValueError('链接未返回有效 Motion CSV')
+        size = response.headers.get('Content-Range', '').rsplit('/', 1)[-1]
+        if response.status == 200:
+            size = response.headers.get('Content-Length', '')
+        if expected_size is not None and (not size.isdigit() or int(size) != expected_size):
+            raise ValueError('公网 Motion 大小与本次导出不一致')
+    return {'url': url, 'accessible': True}

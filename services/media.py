@@ -53,15 +53,19 @@ def naming_time(infos, manual=None):
         return {'value': manual, 'display': dt.strftime('%Y-%m-%d %H:%M:%S') + '（北京时间）',
                 'source': '手动设置（仅用于命名，不改变视频对齐时间）'}
     from zoneinfo import ZoneInfo
-    for idx in (1, 0):
+    candidates = []
+    for idx in (0, 1):
         if not infos[idx]:
             continue
         try:
             (dt, source) = capture_time(infos[idx])
             dt = dt.astimezone(ZoneInfo('Asia/Shanghai'))
-            return {'value': dt.strftime('%Y%m%d_%H%M%S'), 'display': dt.strftime('%Y-%m-%d %H:%M:%S') + '（北京时间）', 'source': ('第三' if idx else '第一') + '视角：' + source}
+            candidates.append((dt, idx, source))
         except ValueError:
             pass
+    if candidates:
+        dt, idx, source = max(candidates, key=lambda item: item[0])
+        return {'value': dt.strftime('%Y%m%d_%H%M%S'), 'display': dt.strftime('%Y-%m-%d %H:%M:%S') + '（北京时间）', 'source': ('第三' if idx else '第一') + '视角：' + source + '（取有效拍摄时间中较晚者）'}
     raise ValueError('视频没有可用拍摄日期时间，请保留原始文件名和拍摄信息')
 
 def alignment(infos, payload):

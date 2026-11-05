@@ -24,6 +24,7 @@ def public_fields(name, mode="both"):
         fields = dict(task_name=re.sub(r'_(first|third)(?=_\d+$|$)', '', name),
                       video_first='', video_third='', video_first_third='')
         fields['video_' + mode] = SERVER_PUBLIC_BASE + quote(name + '.mp4', safe='')
+    fields["motion"] = SERVER_PUBLIC_BASE + quote(name + "_motion.csv", safe="") if mode == "both_motion" else ""
     return fields
 
 
@@ -211,6 +212,9 @@ class JobManager:
                     job["access_checks"] = [verify_video(job[key], published[kind if len(records) == 2 else "video"].stat().st_size)
                         for key, kind in (("video_first", "first"), ("video_third", "third"),
                                           ("video_first_third", "video")) if job[key]]
+                    if job.get("motion"):
+                        from .access_check import verify_motion
+                        job["access_checks"].append(verify_motion(job["motion"], published["motion"].stat().st_size))
                     job["links_verified"] = True
                 except Exception as exc:
                     job["sync_error"] = str(exc)
