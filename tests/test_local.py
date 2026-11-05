@@ -60,6 +60,22 @@ class LocalRules(unittest.TestCase):
             (manager.paths.outputs / video_names(name)['first']).touch()
             self.assertEqual(manager.available_name(name), name + '_1')
 
+    def test_destination_collision_includes_motion_and_keeps_flat_suffix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manager = JobManager(Paths(root/'uploads', root/'outputs'))
+            dest = root/'destination'
+            dest.mkdir()
+            payload = dict(mode='both', project='coffee', role='teacher', content='icecoffee', naming_time='20261105_100000')
+            base = manager.preview(payload)['name']
+            (dest/(base+'_motion.csv')).touch()
+            (manager.paths.outputs/(base+'_1.metadata.json')).touch()
+            with patch('services.jobs.SERVER_DIR', dest):
+                check = manager.check_existing(payload)
+                self.assertTrue(check['existing'])
+                self.assertEqual(check['name'], base+'_2')
+                self.assertEqual(manager.preview(dict(payload, check_existing=True))['name'], base+'_2')
+
     def test_motion_boundary_and_original_columns(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / 'raw.csv'

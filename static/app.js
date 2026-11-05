@@ -194,7 +194,7 @@ function scheduleNaming() {
   const name = `${$('project').value.trim() || '项目'}_${timeValue}_${selectedValue('role') || '角色'}_${selectedValue('content') || '内容'}_${suffix()}`;
   showNames(name, `${outputDir}/${name}.mp4`, `${outputDir}/${name}_motion.csv`);
   for (const button of document.querySelectorAll('[data-copy], #copyRow')) button.disabled = true;
-  namingTimer = setTimeout(updateName, 250);
+  namingTimer = setTimeout(updateName, 500);
 }
 
 async function updateName() {
@@ -217,8 +217,12 @@ async function updateName() {
     return;
   }
   try {
+    $('collisionStatus').textContent = '正在检查保存目录是否重名…';
     const data = await post('/api/naming', selection());
     if (version !== namingVersion) return;
+    $('collisionStatus').textContent = data.existing
+      ? '检测到同名文件，将保存为 ' + data.name + '.mp4；整组结果使用相同编号，原文件保留。'
+      : '重名检查通过（' + data.collision_scope + '）';
     timeValue = data.time.value;
     if (!manualTime) {
       const stamp = data.time.value;
@@ -232,6 +236,21 @@ async function updateName() {
     $('copyThird').value = data.video_third;
     $('copyCombined').value = data.video_first_third;
     $('copyMotion').value = data.motion || '';
+    try {
+      const checked = await post('/api/naming', {...selection(), check_existing: true});
+      if (version !== namingVersion) return;
+      showNames(checked.name, checked.path, checked.motion_path);
+      for (const [id, key] of [['copyTask', 'task_name'], ['copyFirst', 'video_first'],
+        ['copyThird', 'video_third'], ['copyCombined', 'video_first_third'], ['copyMotion', 'motion']]) {
+        $(id).value = checked[key] || '';
+      }
+      $('collisionStatus').textContent = checked.existing
+        ? '检测到同名文件，将保存为 ' + checked.name + '.mp4；整组编号一致，原文件保留。'
+        : '重名检查通过（' + checked.collision_scope + '）';
+    } catch (error) {
+      if (version === namingVersion) $('collisionStatus').textContent = '重名检测失败：' + error.message + '；当前名称仅为预览';
+    }
+
   } catch (error) {
     if (version !== namingVersion) return;
     for (const id of ['copyTask', 'copyFirst', 'copyThird', 'copyCombined', 'copyMotion']) $(id).value = '';
@@ -240,7 +259,8 @@ async function updateName() {
       timeValue = '日期时间';
       $('captureTime').value = '';
     }
-    $('timeSource').textContent = error.message + '；可在上方手动填写日期时间';
+    $('collisionStatus').textContent = '名称或重名检查失败：' + error.message;
+    $('timeSource').textContent = error.message + '；请检查上传、命名设置及服务器连接';
   }
 }
 
@@ -379,11 +399,11 @@ $('start').onclick = async () => {
     $('timestamps').textContent = infoText.join('；');
     const autoDownload = $('downloadTogether').checked;
     const check = await post('/api/check-existing', selection());
-    if (check.existing && !window.confirm('这个任务已上传过，是否重新上传？新版本将使用 _1、_2 编号，不覆盖旧文件。')) {
+    if (check.existing && !window.confirm('检测到同名结果，将使用 ' + check.name + ' 保存整组文件，不覆盖旧文件。是否继续？')) {
       status('已取消重新上传', 0);
       return;
     }
-    const result = await post('/api/jobs', {...selection(), confirm_reupload: check.existing, align: $('align').value, sync_server: true});
+    const result = await post('/api/jobs', {...selection(), confirm_reupload: check.existing, expected_name: check.name, align: $('align').value, sync_server: true});
     const job = await waitForJob(result.id);
     showResult(result.id, job, autoDownload);
     // Keep the completed task's name and links until the user changes the configuration.

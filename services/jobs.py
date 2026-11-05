@@ -76,24 +76,31 @@ class JobManager:
             raise ValueError("上传文件不存在或已失效，请重新选择")
         return record
 
+    def artifact_names(self, name):
+        return set((*video_names(name).values(), name + "_motion.csv",
+                    name + ".metadata.json", name + "_first.mp4", name + "_third.mp4"))
+
+    def local_collision(self, name):
+        return any((self.paths.outputs / filename).exists() for filename in self.artifact_names(name)) or any(
+            job.get("reserved_name") == name and job["status"] == "running"
+            for job in self.jobs.values())
+
     def available_name(self, base):
-        name = base
         number = 0
-        while any((self.paths.outputs / filename).exists()
-                  for filename in (*video_names(name).values(), name + "_motion.csv", name + ".metadata.json",
-                                   name + "_first.mp4", name + "_third.mp4")) or any(
-                      job.get("reserved_name") == name and job["status"] == "running"
-                      for job in self.jobs.values()):
+        while self.local_collision(base if number == 0 else f"{base}_{number}"):
             number += 1
-            name = f"{base}_{number}"
-        return name
+        return base if number == 0 else f"{base}_{number}"
 
     def preview(self, payload):
         infos = [self.upload(payload[key], "video")["info"] if key in selected_keys(payload) and payload.get(key) else None
                  for key in ("first", "third")]
-        name = self.available_name(task_name(infos, payload))
+        base = task_name(infos, payload)
+        check = self.check_existing(payload) if payload.get("check_existing") else {
+            "name": self.available_name(base), "scope": "本次临时导出目录"}
+        name = check["name"]
         return {
             "time": naming_time(infos, payload.get("naming_time")), "name": name,
+            "existing": name != base, "collision_scope": check["scope"],
             "path": str(SERVER_DIR / (name + ".mp4")),
             "motion_path": str(SERVER_DIR / (name + "_motion.csv")),
             **public_fields(name, payload.get("mode", "both")),
@@ -103,31 +110,30 @@ class JobManager:
         from urllib.request import Request
         from .access_check import open_public
         from urllib.error import HTTPError
-        infos = [self.upload(payload[key], "video")["info"] if key in selected_keys(payload) else None for key in ("first", "third")]
+        infos = [self.upload(payload[key], "video")["info"] if key in selected_keys(payload) and payload.get(key) else None
+                 for key in ("first", "third")]
         base = task_name(infos, payload)
-        existing = False
-        name = base
-        number = 0
-        while True:
-            found = False
-            for key in ("video_first", "video_third", "video_first_third"):
+        # On the deployment host check the real destination, including unpublished files.
+        direct = SERVER_DIR.is_dir()
+        for number in range(1001):
+            name = base if number == 0 else f"{base}_{number}"
+            found = self.local_collision(name)
+            for filename in sorted(self.artifact_names(name)):
+                if found:
+                    break
+                if direct:
+                    found = (SERVER_DIR / filename).exists()
+                    continue
                 try:
-                    url = public_fields(name, payload.get('mode', 'both'))[key]
-                    if not url:
-                        continue
-                    with open_public(Request(url, method='HEAD')):
+                    with open_public(Request(SERVER_PUBLIC_BASE + quote(filename, safe=""), method="HEAD")):
                         found = True
-                        break
                 except HTTPError as exc:
                     if exc.code != 404:
-                        raise ValueError('服务器检查失败，HTTP ' + str(exc.code))
+                        raise ValueError('重名检测失败，HTTP ' + str(exc.code))
             if not found:
-                return {"existing": existing, "name": self.available_name(name)}
-            existing = True
-            number += 1
-            name = base + '_' + str(number)
-            if number > 1000:
-                raise ValueError('同名版本过多，请更换命名')
+                return {"existing": number > 0, "name": name,
+                        "scope": "服务器保存目录" if direct else "公网文件与本次临时目录"}
+        raise ValueError('同名版本过多，请更换命名')
 
     def create(self, payload):
         keys = selected_keys(payload)
@@ -145,10 +151,12 @@ class JobManager:
         remote = self.check_existing(payload) if payload.get("sync_server", True) else None
         if remote and remote['existing'] and not payload.get('confirm_reupload'):
             raise ValueError('该任务已上传，请确认是否重新上传')
+        if remote and payload.get("expected_name") and payload["expected_name"] != remote["name"]:
+            raise ValueError("可用文件名已变化为 " + remote["name"] + "，请重新检查并确认")
         if not self.lock.acquire(blocking=False):
             raise BusyError("已有视频正在处理，请完成后重试")
         try:
-            name = self.available_name(remote["name"] if remote else base)
+            name = remote["name"] if remote else self.available_name(base)
             jid = uuid.uuid4().hex
             self.jobs[jid] = {"status": "running", "stage": "准备处理", "progress": 0,
                               "reserved_name": name}
