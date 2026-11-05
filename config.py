@@ -11,6 +11,7 @@ SERVER_HOST = "maxuejiao@172.23.40.162"
 SERVER_HOME = "/home/maxuejiao"
 SERVER_UID = 1004
 SERVER_GID = 1004
+ALLOWED_ORIGINS = frozenset({"https://innojudge.ecnu.edu.cn"})
 
 
 def server_password():

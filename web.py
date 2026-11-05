@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
-from config import SERVER_DIR, SERVER_PUBLIC_BASE, STATIC_DIR
+from config import ALLOWED_ORIGINS, SERVER_DIR, SERVER_PUBLIC_BASE, STATIC_DIR
 from services.jobs import BusyError
 from services.roles import COFFEE_ROLES
 
@@ -36,7 +36,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def allowed(self):
         origin = self.headers.get("Origin")
-        return not origin or origin == "http://" + self.headers.get("Host", "")
+        return (not origin or origin in ALLOWED_ORIGINS
+                or origin == "http://" + self.headers.get("Host", ""))
 
     def do_PUT(self):
         if not self.allowed():
