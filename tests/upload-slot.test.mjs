@@ -65,3 +65,15 @@ test('a real current upload failure is visible and does not reuse old data', asy
   assert.equal(slot.data, null);
   assert.equal(slot.error, 'missing time column');
 });
+
+test('sending all bytes still waits for the server before becoming ready', async () => {
+  const {send, requests} = deferredSender();
+  const slot = new UploadSlot(send);
+  const pending = slot.select({name: 'video.mp4', size: 100});
+  requests[0].progress({percent: 100, loaded: 100, phase: 'waiting'});
+  assert.equal(slot.data, null);
+  assert.equal(slot.phase, 'waiting');
+  requests[0].resolve({token: 'verified'});
+  await pending;
+  assert.equal(slot.data.token, 'verified');
+});

@@ -17,6 +17,8 @@ export class UploadSlot {
     this.data = null;
     this.error = null;
     this.progress = 0;
+    this.loaded = 0;
+    this.phase = 'uploading';
     this.changed(this);
     if (!file) {
       this.pending = Promise.resolve();
@@ -24,7 +26,11 @@ export class UploadSlot {
     }
     const request = this.send(file, progress => {
       if (version !== this.version) return;
-      this.progress = progress;
+      this.progress = typeof progress === 'number' ? progress : progress.percent;
+      if (typeof progress === 'object') {
+        this.loaded = progress.loaded;
+        this.phase = progress.phase;
+      }
       this.changed(this);
     });
     this.request = request;

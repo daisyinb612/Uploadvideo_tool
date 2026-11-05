@@ -354,3 +354,6 @@ h1 {
 .mode-buttons button[aria-pressed="true"] { background:#45613a; color:white; border-color:#45613a; box-shadow:0 0 0 2px #dce7d4; }
 @media(max-width:800px) { .mode-buttons { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:440px) { .mode-buttons { grid-template-columns:1fr; } }
+
+.upload-progress { display:block; width:100%; height:10px; margin:10px 0; accent-color:#78965e; }
+.upload-progress[hidden] { display:none; }

@@ -73,9 +73,14 @@ function requestUpload(file, kind, progress) {
   const promise = new Promise((resolve, reject) => {
     xhr.open('PUT', appURL(kind === 'motion' ? 'api/motion-upload' : 'api/upload'));
     xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+    xhr.timeout = 60 * 60 * 1000;
+    xhr.ontimeout = () => reject(Error('上传或服务器响应超过60分钟，请检查网络后重新选择文件'));
     xhr.upload.onprogress = event => {
-      if (event.lengthComputable) progress(Math.round(event.loaded / event.total * 100));
+      const total = event.lengthComputable ? event.total : file.size;
+      progress({percent: total ? Math.min(100, Math.round(event.loaded / total * 100)) : null,
+        loaded: event.loaded, total, phase: 'uploading'});
     };
+    xhr.upload.onload = () => progress({percent: 100, loaded: file.size, total: file.size, phase: 'waiting'});
     xhr.onload = () => {
       try {
         const data = JSON.parse(xhr.responseText);
@@ -101,9 +106,30 @@ function renderSlot(key, slot) {
   } else if (slot.data) {
     label.textContent = slot.file.name + ' · 已读取';
   } else {
-    label.textContent = slot.file.name + ' · 上传 ' + slot.progress + '%';
+    const size = n => (n / 1024 / 1024).toFixed(1) + ' MB';
+    label.textContent = slot.file.name + (slot.phase === 'waiting'
+      ? ' · 已发送，等待服务器接收确认与文件解析…'
+      : ' · 正在上传 ' + (slot.progress == null ? '' : slot.progress + '% · ')
+        + size(slot.loaded || 0) + ' / ' + size(slot.file.size));
   }
-  if (key !== 'motion') scheduleNaming();
+  let meter = $(key + 'UploadProgress');
+  if (!meter) {
+    meter = document.createElement('progress');
+    meter.id = key + 'UploadProgress';
+    meter.max = 100;
+    meter.className = 'upload-progress';
+    meter.setAttribute('aria-label', key === 'motion' ? 'Motion 上传进度' : (key === 'first' ? '第一视角上传进度' : '第三视角上传进度'));
+    label.after(meter);
+  }
+  meter.hidden = !slot.file || !!slot.data || !!slot.error;
+  if (slot.phase === 'waiting' || slot.progress == null) meter.removeAttribute('value');
+  else meter.value = slot.progress;
+  // Naming only depends on the selected file and its result, not every byte sent.
+  const state = !slot.file ? 'empty' : slot.error ? 'error' : slot.data ? 'ready' : slot.phase;
+  if (key !== 'motion' && slot.namingState !== state) {
+    slot.namingState = state;
+    scheduleNaming();
+  }
 }
 
 for (const key of ['first', 'third', 'motion']) {
@@ -180,7 +206,9 @@ async function updateName() {
     return;
   }
   if (!manualTime && activeSlots.some(slot => slot.file && !slot.data)) {
-    $('timeSource').textContent = '视频仍在上传，完成后自动读取拍摄时间';
+    $('timeSource').textContent = activeSlots.some(slot => slot.file && !slot.data && slot.phase === 'waiting')
+      ? '文件已发送，等待服务器确认与解析；完成后自动读取拍摄时间'
+      : '视频仍在上传，请查看素材卡片的上传进度';
     return;
   }
   if (!mode() || (!manualTime && !views().some(key => slots[key].data))) {
